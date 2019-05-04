@@ -142,6 +142,12 @@ struct instruction {
     src(static_cast<reg_code>((inst >> 12) & 0x7)),  // bits 12 - 14
     val(inst >> 16) {}                               // bits 16 - 31
 
+  instruction(word inst) :
+    op(static_cast<op_code>(inst & 0x3f)),            // bits  0 -  5
+    mode(static_cast<ind_mode>((inst >> 6) & 0x7)),   // bits  6 -  8
+    dst(static_cast<reg_code>((inst >> 9) & 0x7)),    // bits  9 - 11
+    src(static_cast<reg_code>((inst >> 12) & 0x7)) {} // bits 12 - 14
+
   instruction(
     op_code o,
     ind_mode m = ind_mode::ddr,
@@ -154,11 +160,25 @@ struct instruction {
     src(s),
     val(v) {}
 
+  bool is_double_size() const {
+    return bv(mode) & bv(ind_bits::cs);
+  }
+
+  word word_count() const {
+    return is_double_size() ? sizeof(dword) : sizeof(word);
+  }
+
   dword to_dword() const {
     dword result = dv(op) | (dv(mode) << 6) | (dv(dst) << 9) | (dv(src) << 12) | (dv(val) << 16);
-    instruction again{ result };
+    //instruction again{ result };
     return result;
   }
+
+  word to_word() const {
+    word result = dv(op) | (dv(mode) << 6) | (dv(dst) << 9) | (dv(src) << 12);
+    return result;
+  }
+
 };
 
 void null_error(state& s) {
@@ -363,16 +383,18 @@ void call_op(state& s, instruction inst) {
 
 void hlt_op(state& s, instruction inst) {
   s.running = false;
-  s.registers[bv(reg_code::pc)] -= sizeof(dword);
-
+  s.registers[bv(reg_code::pc)] -= inst.word_count();
 }
 
 void loop(state& s) {
   while (s.running) {
     word op_address = s.registers[bv(reg_code::pc)];
-    dword inst_word = read_dword(s, op_address);
+    dword inst_word = read_word(s, op_address);
     instruction inst = { inst_word };
-    s.registers[bv(reg_code::pc)] += sizeof(dword);
+    if (inst.is_double_size()) {
+      inst.val = read_word(s, op_address + sizeof(word));
+    }
+     s.registers[bv(reg_code::pc)] += inst.word_count();
 
     switch (inst.op) {
     case op_code::nop:
@@ -517,6 +539,16 @@ void loop(state& s) {
   }
 }
 
+void write_instruction(state& s, word& address, instruction i) {
+  if (i.is_double_size()) {
+    write_dword(s, address, i.to_dword());
+    address += sizeof(dword);
+  } else {
+    write_word(s, address, i.to_word());
+    address += sizeof(word);
+  }
+}
+
 void init(state& s) {
   s.registers[bv(reg_code::ra)] = 0;
   s.registers[bv(reg_code::rb)] = 0;
@@ -529,39 +561,43 @@ void init(state& s) {
 
   // initialize program
   s.memory.fill(0);
-  write_dword(s, 0x0800, instruction{ op_code::nop }.to_dword());
-  write_dword(s, 0x0804, instruction{ op_code::mov, ind_mode::ddc, reg_code::ra, reg_code::ra, 0x1337 }.to_dword());
-  write_dword(s, 0x0808, instruction{ op_code::mov, ind_mode::ddr, reg_code::rb, reg_code::ra }.to_dword());
-  write_dword(s, 0x080c, instruction{ op_code::mov, ind_mode::ddc, reg_code::rc, reg_code::ra, 0x0707 }.to_dword());
-  write_dword(s, 0x0810, instruction{ op_code::mov, ind_mode::ddc, reg_code::rd, reg_code::ra, 0x0a0a }.to_dword());
+  word adrs = 0x0800;
+  write_instruction(s, adrs, { op_code::nop });
 
-  write_dword(s, 0x0814, instruction{ op_code::add, ind_mode::ddr, reg_code::rd, reg_code::rc }.to_dword());            // rd = 0x1111
-  write_dword(s, 0x0818, instruction{ op_code::mul, ind_mode::ddc, reg_code::rd, reg_code::ra, 2 }.to_dword());         // rd = 0x2222
-  write_dword(s, 0x081c, instruction{ op_code::sub, ind_mode::ddc, reg_code::rd, reg_code::ra, 0x0220 }.to_dword());    // rd = 0x2002
-  write_dword(s, 0x0820, instruction{ op_code::mov, ind_mode::ddr, reg_code::rc, reg_code::rd }.to_dword());            // rc = 0x2002
-  write_dword(s, 0x0824, instruction{ op_code::lsh, ind_mode::ddc, reg_code::rd, reg_code::ra, 2 }.to_dword());         // rd = 0x8008
-  write_dword(s, 0x0828, instruction{ op_code::rsha, ind_mode::ddc, reg_code::rd, reg_code::ra, 1 }.to_dword());        // rd = 0xc004
-  write_dword(s, 0x082c, instruction{ op_code::rshl, ind_mode::ddc, reg_code::rd, reg_code::ra, 1 }.to_dword());        // rd = 0x6002
-  write_dword(s, 0x0830, instruction{ op_code::xore, ind_mode::ddr, reg_code::rd, reg_code::rc }.to_dword());             // rd = 0x4000
-  write_dword(s, 0x0834, instruction{ op_code::add, ind_mode::ddc, reg_code::rd, reg_code::ra, 0xf000 }.to_dword());    // rd = 0x3000
-  write_dword(s, 0x0838, instruction{ op_code::mov, ind_mode::ddr, reg_code::pc, reg_code::rd }.to_dword());            // pc = 0x3000
+  write_instruction(s, adrs, { op_code::mov, ind_mode::ddc, reg_code::ra, reg_code::ra, 0x1337 });
+  write_instruction(s, adrs, { op_code::mov, ind_mode::ddr, reg_code::rb, reg_code::ra });
+  write_instruction(s, adrs, { op_code::mov, ind_mode::ddc, reg_code::rc, reg_code::ra, 0x0707 });
+  write_instruction(s, adrs, { op_code::mov, ind_mode::ddc, reg_code::rd, reg_code::ra, 0x0a0a });
 
-  write_dword(s, 0x083c, instruction{ op_code::hlt }.to_dword()); // do not halt here
+  write_instruction(s, adrs, { op_code::add, ind_mode::ddr, reg_code::rd, reg_code::rc });            // rd = 0x1111
+  write_instruction(s, adrs, { op_code::mul, ind_mode::ddc, reg_code::rd, reg_code::ra, 2 });         // rd = 0x2222
+  write_instruction(s, adrs, { op_code::sub, ind_mode::ddc, reg_code::rd, reg_code::ra, 0x0220 });    // rd = 0x2002
+  write_instruction(s, adrs, { op_code::mov, ind_mode::ddr, reg_code::rc, reg_code::rd });            // rc = 0x2002
+  write_instruction(s, adrs, { op_code::lsh, ind_mode::ddc, reg_code::rd, reg_code::ra, 2 });         // rd = 0x8008
+  write_instruction(s, adrs, { op_code::rsha, ind_mode::ddc, reg_code::rd, reg_code::ra, 1 });        // rd = 0xc004
+  write_instruction(s, adrs, { op_code::rshl, ind_mode::ddc, reg_code::rd, reg_code::ra, 1 });        // rd = 0x6002
+  write_instruction(s, adrs, { op_code::xore, ind_mode::ddr, reg_code::rd, reg_code::rc });           // rd = 0x4000
+  write_instruction(s, adrs, { op_code::add, ind_mode::ddc, reg_code::rd, reg_code::ra, 0xf000 });    // rd = 0x3000
+  write_instruction(s, adrs, { op_code::mov, ind_mode::ddr, reg_code::pc, reg_code::rd });            // pc = 0x3000
+  write_instruction(s, adrs, { op_code::hlt }); // do not halt here
 
-  write_dword(s, 0x3000, instruction{ op_code::rem, ind_mode::ddr, reg_code::rc, reg_code::rb }.to_dword());            // rc = 0x0ccb
-  write_dword(s, 0x3004, instruction{ op_code::cmp, ind_mode::ddc, reg_code::rc, reg_code::ra, 0x0ccb }.to_dword());    // ze = 1
-  write_dword(s, 0x3008, instruction{ op_code::cmove, ind_mode::ddc, reg_code::pc, reg_code::ra, 0x4000 }.to_dword());  // ze = 1
-  write_dword(s, 0x300c, instruction{ op_code::hlt }.to_dword()); // do not halt here
+  adrs = 0x3000;
+  write_instruction(s, adrs, { op_code::rem, ind_mode::ddr, reg_code::rc, reg_code::rb });             // rc = 0x0ccb
+  write_instruction(s, adrs, { op_code::cmp, ind_mode::ddc, reg_code::rc, reg_code::ra, 0x0ccb });    // ze = 1
+  write_instruction(s, adrs, { op_code::cmove, ind_mode::ddc, reg_code::pc, reg_code::ra, 0x4000 });  // pc = 0x4000
+  write_instruction(s, adrs, { op_code::hlt }); // do not halt here
 
-  write_dword(s, 0x4000, instruction{ op_code::push, ind_mode::ddr, reg_code::ra, reg_code::ra }.to_dword());           // *sp = 0x1337 sp = 0x0002
-  write_dword(s, 0x4004, instruction{ op_code::sub, ind_mode::ddc, reg_code::ra, reg_code::ra, 1 }.to_dword());         // ra = 0x1336
+  adrs = 0x4000;
+  write_instruction(s, adrs, { op_code::push, ind_mode::ddr, reg_code::ra, reg_code::ra });           // *sp = 0x1337 sp = 0x0002
+  write_instruction(s, adrs, { op_code::sub, ind_mode::ddc, reg_code::ra, reg_code::ra, 1 });         // ra = 0x1336
 
-  write_dword(s, 0x4008, instruction{ op_code::cmp, ind_mode::idr, reg_code::sp, reg_code::ra }.to_dword());            // ze=0 ca=0
-  write_dword(s, 0x400c, instruction{ op_code::cmova, ind_mode::ddc, reg_code::pc, reg_code::ra, 0x5000 }.to_dword());  //
-  write_dword(s, 0x4010, instruction{ op_code::hlt }.to_dword()); // do not halt here
+  write_instruction(s, adrs, { op_code::cmp, ind_mode::idr, reg_code::sp, reg_code::ra });            // ze=0 ca=0
+  write_instruction(s, adrs, { op_code::cmova, ind_mode::ddc, reg_code::pc, reg_code::ra, 0x5000 });  // pc = 0x5000
+  write_instruction(s, adrs, { op_code::hlt }); // do not halt here
 
-  write_dword(s, 0x5000, instruction{ op_code::pop, ind_mode::ddr, reg_code::rc }.to_dword());                          // rc=1337 sp=0x0000
-  write_dword(s, 0x5004, instruction{ op_code::hlt }.to_dword()); // halt here
+  adrs = 0x5000;
+  write_instruction(s, adrs, { op_code::pop, ind_mode::ddr, reg_code::rc });                          // rc=1337 sp=0x0000
+  write_instruction(s, adrs, { op_code::hlt }); // halt here
 
   s.running = true;
 }
