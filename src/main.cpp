@@ -94,9 +94,9 @@ enum class op_code : byte {
   rem,      // remainder %=
 
   // bitwise op codes
-  and,      // bitwise and &=
-  or,       // bitwise or |=
-  xor,      // bitwise or ^=
+  ande,      // bitwise and &= (not called and because it is a c++ keyword)
+  ore,       // bitwise or |= (not called or because it is a c++ keyword)
+  xore,      // bitwise or ^= (not called xor because it is a c++ keyword)
   lsh,      // left shift <<=
   rshl,     // logical right shift >>>=
   rsha      // arithmatic right shift  >>=
@@ -465,19 +465,19 @@ void loop(state& s) {
       }, s, inst);
       break;
 
-    case op_code::and:
+    case op_code::ande:
       binary_op([](state& s, word x, word y) {
         return x & y;
       }, s, inst);
       break;
 
-    case op_code::or:
+    case op_code::ore:
       binary_op([](state& s, word x, word y) {
         return x | y;
       }, s, inst);
       break;
 
-    case op_code::xor:
+    case op_code::xore:
       binary_op([](state& s, word x, word y) {
         return x ^ y;
       }, s, inst);
@@ -542,7 +542,7 @@ void init(state& s) {
   write_dword(s, 0x0824, instruction{ op_code::lsh, ind_mode::ddc, reg_code::rd, reg_code::ra, 2 }.to_dword());         // rd = 0x8008
   write_dword(s, 0x0828, instruction{ op_code::rsha, ind_mode::ddc, reg_code::rd, reg_code::ra, 1 }.to_dword());        // rd = 0xc004
   write_dword(s, 0x082c, instruction{ op_code::rshl, ind_mode::ddc, reg_code::rd, reg_code::ra, 1 }.to_dword());        // rd = 0x6002
-  write_dword(s, 0x0830, instruction{ op_code::xor, ind_mode::ddr, reg_code::rd, reg_code::rc }.to_dword());             // rd = 0x4000
+  write_dword(s, 0x0830, instruction{ op_code::xore, ind_mode::ddr, reg_code::rd, reg_code::rc }.to_dword());             // rd = 0x4000
   write_dword(s, 0x0834, instruction{ op_code::add, ind_mode::ddc, reg_code::rd, reg_code::ra, 0xf000 }.to_dword());    // rd = 0x3000
   write_dword(s, 0x0838, instruction{ op_code::mov, ind_mode::ddr, reg_code::pc, reg_code::rd }.to_dword());            // pc = 0x3000
 
